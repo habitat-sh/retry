@@ -1,227 +1,246 @@
-//! Provides asynchronous retry functionality via `futures`.
-//!
-//! # Examples
-//!
-//! ```rust
-//! # extern crate futures;
-//! # extern crate tokio_timer;
-//! # extern crate retry;
-//! # use futures::future::Future;
-//! use tokio_timer::Timer;
-//! use retry::delay::{Exponential, jitter};
-//! use retry::async::retry;
-//!
-//! pub fn main() {
-//!     let timer = Timer::default();
-//!     let delay = Exponential::from_millis(10)
-//!         .map(jitter).take(3);
-//!
-//!     let mut collection = vec![1, 2, 3].into_iter();
-//!
-//!     let future = retry(timer, delay, || {
-//!         match collection.next() {
-//!             Some(n) if n == 3 => Ok("n is 3!"),
-//!             Some(_) => Err("n must be 3!"),
-//!             None => Err("n was never 3!"),
-//!         }
-//!     });
-//!
-//!     let result = future.wait();
-//!
-//!     assert!(result.is_ok());
-//! }
-//! ```
+//! Asynchronous implementation of `retry` and `retry_with_index`. This module is enabled with the
+//! `"asynchronous"` feature.
 
-use std::error::{Error as StdError};
-use std::io::{Error as IoError};
-use std::fmt::{Debug, Error as FmtError, Formatter};
-use std::time::Duration;
+use crate::{Error, OperationResult};
+use std::{future::Future, time::Duration};
+use tokio::time;
 
-use futures::{Async, IntoFuture, Future, Poll};
-use futures::future::{Either, Flatten, FutureResult};
-#[cfg(feature = "async_tokio_timer")]
-use tokio_timer::{Timer, TimerError, Sleep as TimerSleep};
-#[cfg(feature = "async_tokio_core")]
-use tokio_core::reactor::{Handle as ReactorHandle, Timeout as ReactorTimeout};
-
-use super::Error;
-
-/// Produce a future that resolves after a given delay.
-pub trait Sleep {
-    /// The type of error that the future will result in if it fails.
-    type Error: StdError;
-    /// The future that `sleep` will return.
-    type Future: Future<Error = Self::Error>;
-    /// Returns a future that will resolve after a given delay.
-    fn sleep(&mut self, duration: Duration) -> Self::Future;
+/// Retry the given asynchronous operation until it succeeds, or until the given `Duration`
+/// iterator ends.
+pub async fn retry<I, O, R, E, OR, F>(iterable: I, mut operation: O) -> Result<R, Error<E>>
+where
+    I: IntoIterator<Item = Duration>,
+    O: FnMut() -> F,
+    OR: Into<OperationResult<R, E>>,
+    F: Future<Output = OR>,
+{
+    retry_with_index(iterable, |_| operation()).await
 }
 
-#[cfg(feature = "async_tokio_timer")]
-impl Sleep for Timer {
-    type Error = TimerError;
-    type Future = TimerSleep;
-    fn sleep(&mut self, duration: Duration) -> Self::Future {
-        Timer::sleep(self, duration)
-    }
-}
+/// Retry the given asynchronous operation until it succeeds, or until the given `Duration`
+/// iterator ends, with each iteration of the operation receiving the number of the attempt as an
+/// argument.
+pub async fn retry_with_index<I, O, R, E, OR, F>(
+    iterable: I,
+    mut operation: O,
+) -> Result<R, Error<E>>
+where
+    I: IntoIterator<Item = Duration>,
+    O: FnMut(u64) -> F,
+    OR: Into<OperationResult<R, E>>,
+    F: Future<Output = OR>,
+{
+    let mut iterator = iterable.into_iter();
+    let mut current_try = 1;
+    let mut total_delay = Duration::default();
 
-#[cfg(feature = "async_tokio_core")]
-impl Sleep for ReactorHandle {
-    type Error = IoError;
-    type Future = Flatten<FutureResult<ReactorTimeout, IoError>>;
-    fn sleep(&mut self, duration: Duration) -> Self::Future {
-        ReactorTimeout::new(duration, self).into_future().flatten()
-    }
-}
-
-/// Keep track of the state of our future, whether it
-/// currently sleeps or executes the operation.
-enum RetryState<S, A> where S: Sleep, A: IntoFuture {
-    Running(A::Future),
-    Sleeping(S::Future)
-}
-
-/// Future that drives multiple attempts at an operation.
-pub struct RetryFuture<S, I, O, A> where S: Sleep, I: IntoIterator<Item = Duration>, A: IntoFuture, O: FnMut() -> A {
-    delay: I::IntoIter,
-    state: RetryState<S, A>,
-    operation: O,
-    sleep: S,
-    total_delay: Duration,
-    tries: u64
-}
-
-impl<S, I, O, A> Debug for RetryFuture<S, I, O, A> where S: Sleep, I: IntoIterator<Item = Duration>, A: IntoFuture, O: FnMut() -> A {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), FmtError> {
-        write!(f, "RetryFuture {{ total_delay: {:?}, tries: {:?} }}", self.total_delay, self.tries)
-    }
-}
-
-/// Retry the given operation asynchronously until it succeeds, or until the given Duration iterator ends.
-pub fn retry<S, I, O, A>(sleep: S, iterable: I, operation: O) -> RetryFuture<S, I, O, A> where S: Sleep, I: IntoIterator<Item = Duration>, A: IntoFuture, O: FnMut() -> A {
-    RetryFuture::spawn(sleep, iterable, operation)
-}
-
-impl<S, I, O, A> RetryFuture<S, I, O, A> where S: Sleep, I: IntoIterator<Item = Duration>, A: IntoFuture, O: FnMut() -> A {
-    fn spawn(sleep: S, iterable: I, mut operation: O) -> RetryFuture<S, I, O, A> {
-        RetryFuture {
-            delay: iterable.into_iter(),
-            state: RetryState::Running(operation().into_future()),
-            operation: operation,
-            sleep: sleep,
-            total_delay: Duration::default(),
-            tries: 1
-        }
-    }
-
-    fn attempt(&mut self) -> Poll<A::Item, Error<A::Error>> {
-        let future = (self.operation)().into_future();
-        self.state = RetryState::Running(future);
-        return self.poll();
-    }
-
-    fn retry(&mut self, err: A::Error) -> Poll<A::Item, Error<A::Error>> {
-        match self.delay.next() {
-            None => Err(Error::Operation{
-                error: err,
-                total_delay: self.total_delay,
-                tries: self.tries
-            }),
-            Some(duration) => {
-                self.total_delay += duration;
-                self.tries += 1;
-                let future = self.sleep.sleep(duration);
-                self.state = RetryState::Sleeping(future);
-                return self.poll();
-            }
-        }
-    }
-}
-
-impl<S, I, O, A> Future for RetryFuture<S, I, O, A> where S: Sleep, I: IntoIterator<Item = Duration>, A: IntoFuture, O: FnMut() -> A {
-    type Item = A::Item;
-    type Error = Error<A::Error>;
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let result = match self.state {
-            RetryState::Running(ref mut future) =>
-                Either::A(future.poll()),
-            RetryState::Sleeping(ref mut future) =>
-                Either::B(future.poll())
-        };
-
-        match result {
-            Either::A(poll_result) => match poll_result {
-                Ok(async) => Ok(async),
-                Err(err) => self.retry(err)
-            },
-            Either::B(poll_result) => {
-                let poll_async = poll_result
-                    .map_err(|err| Error::Internal(err.description().to_string()))?;
-
-                match poll_async {
-                    Async::NotReady => Ok(Async::NotReady),
-                    Async::Ready(_) => self.attempt()
+    loop {
+        match operation(current_try).await.into() {
+            OperationResult::Ok(value) => return Ok(value),
+            OperationResult::Retry(error) => {
+                if let Some(delay) = iterator.next() {
+                    time::delay_for(delay).await;
+                    current_try += 1;
+                    total_delay += delay;
+                } else {
+                    return Err(Error::Operation {
+                        error,
+                        total_delay,
+                        tries: current_try,
+                    });
                 }
             }
+            OperationResult::Err(error) => {
+                return Err(Error::Operation {
+                    error,
+                    total_delay,
+                    tries: current_try,
+                });
+            }
         }
     }
 }
 
-#[test]
-fn attempts_just_once() {
-    use std::iter::empty;
-    let delay = empty();
-    let mut num_calls = 0;
-    let timer = Timer::default();
-    let res = retry(timer, delay, || {
-        num_calls += 1;
-        Err::<(), u64>(42)
-    }).wait();
+#[cfg(test)]
+mod tests {
+    use futures::future;
+    use std::{sync::Arc, time::Duration};
+    use tokio;
 
-    assert_eq!(num_calls, 1);
-    assert_eq!(res, Err(Error::Operation{
-        error: 42,
-        tries: 1,
-        total_delay: Duration::from_millis(0)
-    }));
-}
+    use super::{retry, retry_with_index};
+    use crate::{
+        delay::{Exponential, Fixed, NoDelay, Range},
+        opresult::OperationResult,
+        Error,
+    };
 
-#[test]
-fn attempts_until_max_retries_exceeded() {
-    use std::time::Duration;
-    use super::delay::Fixed;
-    let timer = Timer::default();
-    let delay = Fixed::from_millis(100).take(2);
-    let mut num_calls = 0;
-    let res = retry(timer, delay, || {
-        num_calls += 1;
-        Err::<(), u64>(42)
-    }).wait();
+    #[tokio::test]
+    async fn succeeds_with_infinite_retries() {
+        let mut collection = vec![1, 2, 3, 4, 5].into_iter();
 
-    assert_eq!(num_calls, 3);
-    assert_eq!(res, Err(Error::Operation{
-        error: 42,
-        tries: 3,
-        total_delay: Duration::from_millis(200)
-    }));
-}
+        let value = retry(NoDelay, || match collection.next() {
+            Some(n) if n == 5 => future::ready(Ok(n)),
+            Some(_) => future::ready(Err("not 5")),
+            None => future::ready(Err("not 5")),
+        })
+        .await
+        .unwrap();
 
-#[test]
-fn attempts_until_success() {
-    use super::delay::Fixed;
-    let timer = Timer::default();
-    let delay = Fixed::from_millis(100);
-    let mut num_calls = 0;
-    let res = retry(timer, delay, || {
-        num_calls += 1;
-        if num_calls < 4 {
-            Err::<(), u64>(42)
-        } else {
-            Ok::<(), u64>(())
+        assert_eq!(value, 5);
+    }
+
+    #[tokio::test]
+    async fn succeeds_with_maximum_retries() {
+        let mut collection = vec![1, 2].into_iter();
+
+        let value = retry(NoDelay.take(1), || match collection.next() {
+            Some(n) if n == 2 => future::ready(Ok(n)),
+            Some(_) => future::ready(Err("not 2")),
+            None => future::ready(Err("not 2")),
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(value, 2);
+    }
+
+    #[tokio::test]
+    async fn fails_after_last_try() {
+        let mut collection = vec![1].into_iter();
+
+        let res = retry(NoDelay.take(1), || match collection.next() {
+            Some(n) if n == 2 => future::ready(Ok(n)),
+            Some(_) => future::ready(Err("not 2")),
+            None => future::ready(Err("not 2")),
+        })
+        .await;
+
+        assert_eq!(
+            res,
+            Err(Error::Operation {
+                error: "not 2",
+                tries: 2,
+                total_delay: Duration::from_millis(0)
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn fatal_errors() {
+        let mut collection = vec![1].into_iter();
+
+        let res = retry(NoDelay.take(2), || match collection.next() {
+            Some(n) if n == 2 => future::ready(OperationResult::Ok(n)),
+            Some(_) => future::ready(OperationResult::Err("no retry")),
+            None => future::ready(OperationResult::Err("not 2")),
+        })
+        .await;
+
+        assert_eq!(
+            res,
+            Err(Error::Operation {
+                error: "no retry",
+                tries: 1,
+                total_delay: Duration::from_millis(0)
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn succeeds_with_fixed_delay() {
+        let mut collection = vec![1, 2].into_iter();
+
+        let value = retry(Fixed::from_millis(1), || match collection.next() {
+            Some(n) if n == 2 => future::ready(Ok(n)),
+            Some(_) => future::ready(Err("not 2")),
+            None => future::ready(Err("not 2")),
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(value, 2);
+    }
+
+    #[tokio::test]
+    async fn succeeds_with_exponential_delay() {
+        let mut collection = vec![1, 2].into_iter();
+
+        let value = retry(Exponential::from_millis(1), || match collection.next() {
+            Some(n) if n == 2 => future::ready(Ok(n)),
+            Some(_) => future::ready(Err("not 2")),
+            None => future::ready(Err("not 2")),
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(value, 2);
+    }
+
+    #[tokio::test]
+    async fn succeeds_with_ranged_delay() {
+        let mut collection = vec![1, 2].into_iter();
+
+        let value = retry(Range::from_millis_exclusive(1, 10), || {
+            match collection.next() {
+                Some(n) if n == 2 => future::ready(Ok(n)),
+                Some(_) => future::ready(Err("not 2")),
+                None => future::ready(Err("not 2")),
+            }
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(value, 2);
+    }
+
+    #[tokio::test]
+    async fn succeeds_with_index() {
+        let mut collection = vec![1, 2, 3].into_iter();
+
+        let value = retry_with_index(NoDelay, |current_try| match collection.next() {
+            Some(n) if n == current_try => future::ready(Ok(n)),
+            Some(_) => future::ready(Err("not current_try")),
+            None => future::ready(Err("not current_try")),
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(value, 1);
+    }
+
+    #[tokio::test]
+    async fn succeeds_with_index_async_closure() {
+        let collection = Arc::new(vec![0, 2, 3]);
+        let mut i = 0;
+        let value = retry_with_index(NoDelay, |current_try| {
+            let collection_copy = Arc::clone(&collection);
+            let f = async move {
+                match collection_copy.get(i).copied() {
+                    Some(n) if n == current_try => Ok(n),
+                    Some(_) => Err("not current_try"),
+                    None => Err("not current_try"),
+                }
+            };
+            i += 1;
+            f
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(value, 2);
+    }
+
+    #[tokio::test]
+    async fn succeeds_with_index_async_fn() {
+        async fn op(current_try: u64) -> Result<(), &'static str> {
+            if current_try == 2 {
+                Ok(())
+            } else {
+                Err("not 2")
+            }
         }
-    }).wait();
+        let value = retry_with_index(NoDelay, op).await;
 
-    assert_eq!(res, Ok(()));
-    assert_eq!(num_calls, 4);
+        assert!(value.is_ok());
+    }
 }

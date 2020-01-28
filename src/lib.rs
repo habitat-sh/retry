@@ -1,5 +1,7 @@
 //! Crate `retry` provides utilities for retrying operations that can fail.
 //!
+//! Asynchronous versions of these utilities can be enabled with the `"asynchronous"` feature flag.
+//!
 //! # Usage
 //!
 //! Retry an operation using the `retry` function. `retry` accepts an iterator over `Duration`s and
@@ -123,6 +125,8 @@ use std::{
     time::Duration,
 };
 
+#[cfg(feature = "asynchronous")]
+pub mod asynchronous;
 pub mod delay;
 mod opresult;
 
