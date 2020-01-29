@@ -61,9 +61,54 @@ where
     }
 }
 
+/// Retry a future with the syntax
+/// `retry_future!(IntoIterator<Item = Duration>, Future<Output = Into<OperationResult<R, E>>>)`
+///
+/// This is a workaround for cases when using `retry` is not possible because it is not possible
+/// to return a value capturing a reference from a closure [1].
+///
+/// [1] https://github.com/rustasync/team/issues/19
+#[macro_export]
+macro_rules! retry_future {
+    ($delays:expr, $future:expr) => {
+        async {
+            let mut iterator = $delays.into_iter();
+            let mut current_try = 1;
+            let mut total_delay = ::std::time::Duration::default();
+
+            loop {
+                match $future.await.into() {
+                    $crate::OperationResult::Ok(value) => return Ok(value),
+                    $crate::OperationResult::Retry(error) => {
+                        if let Some(delay) = iterator.next() {
+                            ::tokio::time::delay_for(delay).await;
+                            current_try += 1;
+                            total_delay += delay;
+                        } else {
+                            return Err($crate::Error::Operation {
+                                error,
+                                total_delay,
+                                tries: current_try,
+                            });
+                        }
+                    }
+                    $crate::OperationResult::Err(error) => {
+                        return Err($crate::Error::Operation {
+                            error,
+                            total_delay,
+                            tries: current_try,
+                        });
+                    }
+                }
+            }
+        }
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use futures::future;
+    use rand::Rng;
     use std::{sync::Arc, time::Duration};
     use tokio;
 
@@ -71,7 +116,7 @@ mod tests {
     use crate::{
         delay::{Exponential, Fixed, NoDelay, Range},
         opresult::OperationResult,
-        Error,
+        retry_future, Error,
     };
 
     #[tokio::test]
@@ -242,5 +287,21 @@ mod tests {
         let value = retry_with_index(NoDelay, op).await;
 
         assert!(value.is_ok());
+    }
+
+    #[tokio::test]
+    async fn retry_future_macro() {
+        async fn random() -> Result<u8, &'static str> {
+            let mut rng = rand::thread_rng();
+            let n = rng.gen();
+            if n < 100 {
+                Ok(n)
+            } else {
+                Err("not < 100")
+            }
+        }
+        let value = retry_future!(NoDelay, random()).await.unwrap();
+
+        assert!(value < 100);
     }
 }
