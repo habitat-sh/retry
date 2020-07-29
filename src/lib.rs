@@ -208,26 +208,11 @@ where
     E: StdError,
 {
     fn fmt(&self, formatter: &mut Formatter) -> Result<(), FmtError> {
-        write!(formatter, "{}", self.description())
-    }
-}
-
-impl<E> StdError for Error<E>
-where
-    E: StdError,
-{
-    fn description(&self) -> &str {
-        match *self {
-            Error::Operation { ref error, .. } => error.description(),
-            Error::Internal(ref description) => description,
-        }
-    }
-
-    fn cause(&self) -> Option<&dyn StdError> {
-        match *self {
-            Error::Operation { ref error, .. } => Some(error),
-            Error::Internal(_) => None,
-        }
+        let msg = match *self {
+            Error::Operation { ref error, .. } => format!("{}", error),
+            Error::Internal(ref error) => format!("{}", error),
+        };
+        write!(formatter, "{}", msg)
     }
 }
 
