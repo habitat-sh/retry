@@ -216,6 +216,19 @@ where
     }
 }
 
+impl<E: 'static> StdError for Error<E>
+where
+    E: StdError,
+{
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        if let Self::Operation { error, .. } = self {
+            Some(error)
+        } else {
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
