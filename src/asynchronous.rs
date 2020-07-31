@@ -72,7 +72,7 @@ where
 macro_rules! retry_future {
     ($delays:expr, $future:expr) => {
         async {
-            let mut iterator = $delays.into_iter();
+            let mut iterator = $delays.into_iter().peekable();
             let mut current_try = 1;
             let mut total_delay = ::std::time::Duration::default();
 
@@ -81,9 +81,11 @@ macro_rules! retry_future {
                     $crate::OperationResult::Ok(value) => return Ok(value),
                     $crate::OperationResult::Retry(error) => {
                         if let Some(delay) = iterator.next() {
-                            ::tokio::time::delay_for(delay).await;
-                            current_try += 1;
-                            total_delay += delay;
+                            if iterator.peek().is_some() {
+                                ::tokio::time::delay_for(delay).await;
+                                current_try += 1;
+                                total_delay += delay;
+                            }
                         } else {
                             return Err($crate::Error::Operation {
                                 error,
