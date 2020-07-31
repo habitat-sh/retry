@@ -209,8 +209,8 @@ where
 {
     fn fmt(&self, formatter: &mut Formatter) -> Result<(), FmtError> {
         let msg = match *self {
-            Error::Operation { ref error, .. } => format!("{}", error),
-            Error::Internal(ref error) => format!("{}", error),
+            Error::Operation { ref error, .. } => error.to_string(),
+            Error::Internal(ref error) => error.to_string(),
         };
         write!(formatter, "{}", msg)
     }
