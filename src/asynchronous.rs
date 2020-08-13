@@ -43,7 +43,7 @@ where
                     current_try += 1;
                     total_delay += delay;
                 } else {
-                    return Err(Error::Operation {
+                    return Err(Error {
                         error,
                         total_delay,
                         tries: current_try,
@@ -51,7 +51,7 @@ where
                 }
             }
             OperationResult::Err(error) => {
-                return Err(Error::Operation {
+                return Err(Error {
                     error,
                     total_delay,
                     tries: current_try,
@@ -85,7 +85,7 @@ macro_rules! retry_future {
                             current_try += 1;
                             total_delay += delay;
                         } else {
-                            return Err($crate::Error::Operation {
+                            return Err($crate::Error {
                                 error,
                                 total_delay,
                                 tries: current_try,
@@ -93,7 +93,7 @@ macro_rules! retry_future {
                         }
                     }
                     $crate::OperationResult::Err(error) => {
-                        return Err($crate::Error::Operation {
+                        return Err($crate::Error {
                             error,
                             total_delay,
                             tries: current_try,
@@ -162,7 +162,7 @@ mod tests {
 
         assert_eq!(
             res,
-            Err(Error::Operation {
+            Err(Error {
                 error: "not 2",
                 tries: 2,
                 total_delay: Duration::from_millis(0)
@@ -183,7 +183,7 @@ mod tests {
 
         assert_eq!(
             res,
-            Err(Error::Operation {
+            Err(Error {
                 error: "no retry",
                 tries: 1,
                 total_delay: Duration::from_millis(0)

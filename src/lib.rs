@@ -166,7 +166,7 @@ where
                     current_try += 1;
                     total_delay += delay;
                 } else {
-                    return Err(Error::Operation {
+                    return Err(Error {
                         error,
                         total_delay,
                         tries: current_try,
@@ -174,7 +174,7 @@ where
                 }
             }
             OperationResult::Err(error) => {
-                return Err(Error::Operation {
+                return Err(Error {
                     error,
                     total_delay,
                     tries: current_try,
@@ -185,22 +185,19 @@ where
 }
 
 /// An error with a retryable operation.
+///
+/// The operation's last error, plus the number of times the operation was tried and the
+/// duration spent waiting between tries.
 #[derive(Debug, PartialEq, Eq)]
-pub enum Error<E> {
-    /// The operation's last error, plus the number of times the operation was tried and the
-    /// duration spent waiting between tries.
-    Operation {
-        /// The error returned by the operation on the last try.
-        error: E,
-        /// The duration spent waiting between retries of the operation.
-        ///
-        /// Note that this does not include the time spent running the operation itself.
-        total_delay: Duration,
-        /// The total number of times the operation was tried.
-        tries: u64,
-    },
-    /// Something went wrong in the internal logic.
-    Internal(String),
+pub struct Error<E> {
+    /// The error returned by the operation on the last try.
+    pub error: E,
+    /// The duration spent waiting between retries of the operation.
+    ///
+    /// Note that this does not include the time spent running the operation itself.
+    pub total_delay: Duration,
+    /// The total number of times the operation was tried.
+    pub tries: u64,
 }
 
 impl<E> Display for Error<E>
@@ -208,11 +205,7 @@ where
     E: StdError,
 {
     fn fmt(&self, formatter: &mut Formatter) -> Result<(), FmtError> {
-        let msg = match *self {
-            Error::Operation { ref error, .. } => error.to_string(),
-            Error::Internal(ref error) => error.to_string(),
-        };
-        write!(formatter, "{}", msg)
+        write!(formatter, "{}", self.error)
     }
 }
 
@@ -221,11 +214,7 @@ where
     E: StdError,
 {
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
-        if let Self::Operation { error, .. } = self {
-            Some(error)
-        } else {
-            None
-        }
+        Some(&self.error)
     }
 }
 
@@ -277,7 +266,7 @@ mod tests {
 
         assert_eq!(
             res,
-            Err(Error::Operation {
+            Err(Error {
                 error: "not 2",
                 tries: 2,
                 total_delay: Duration::from_millis(0)
@@ -297,7 +286,7 @@ mod tests {
 
         assert_eq!(
             res,
-            Err(Error::Operation {
+            Err(Error {
                 error: "no retry",
                 tries: 1,
                 total_delay: Duration::from_millis(0)
