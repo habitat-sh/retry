@@ -12,12 +12,12 @@ repository = "https://github.com/jimmycuadra/retry"
 version = "1.0.0"
 
 [dependencies]
-rand = "0.7.3"
-tokio = { version = "0.2.11", features = ["time"], optional = true }
+rand = "*"
+tokio = { version = "*", features = ["time"], optional = true }
 
 [dev-dependencies]
-tokio = { version = "0.2.11", features = ["macros", "rt-threaded"] }
-futures = "0.3.1"
+tokio = { version = "*", features = ["macros"] }
+futures = "*"
 
 [features]
 default = []

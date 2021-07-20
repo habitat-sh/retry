@@ -39,7 +39,7 @@ where
             OperationResult::Ok(value) => return Ok(value),
             OperationResult::Retry(error) => {
                 if let Some(delay) = iterator.next() {
-                    time::delay_for(delay).await;
+                    time::sleep(delay).await;
                     current_try += 1;
                     total_delay += delay;
                 } else {
@@ -81,7 +81,7 @@ macro_rules! retry_future {
                     $crate::OperationResult::Ok(value) => return Ok(value),
                     $crate::OperationResult::Retry(error) => {
                         if let Some(delay) = iterator.next() {
-                            ::tokio::time::delay_for(delay).await;
+                            ::tokio::time::sleep(delay).await;
                             current_try += 1;
                             total_delay += delay;
                         } else {
