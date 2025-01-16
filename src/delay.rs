@@ -5,10 +5,9 @@ use std::time::Duration;
 use std::u64::MAX as U64_MAX;
 
 use rand::{
-    distributions::{Distribution, Uniform},
-    random,
+    distr::{Distribution, Uniform},
+    random, rng,
     rngs::ThreadRng,
-    thread_rng,
 };
 
 /// Each retry increases the delay since the last exponentially.
@@ -172,8 +171,8 @@ impl Range {
     /// Panics if the minimum is greater than or equal to the maximum.
     pub fn from_millis_exclusive(minimum: u64, maximum: u64) -> Self {
         Range {
-            distribution: Uniform::new(minimum, maximum),
-            rng: thread_rng(),
+            distribution: Uniform::new(minimum, maximum).expect("Invalid Inputs"),
+            rng: rng(),
         }
     }
 
@@ -184,8 +183,8 @@ impl Range {
     /// Panics if the minimum is greater than or equal to the maximum.
     pub fn from_millis_inclusive(minimum: u64, maximum: u64) -> Self {
         Range {
-            distribution: Uniform::new_inclusive(minimum, maximum),
-            rng: thread_rng(),
+            distribution: Uniform::new_inclusive(minimum, maximum).expect("Invalid Inputs"),
+            rng: rng(),
         }
     }
 }

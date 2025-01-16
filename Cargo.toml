@@ -12,7 +12,7 @@ repository = "https://github.com/jimmycuadra/retry"
 version = "1.0.0"
 
 [dependencies]
-rand = "*"
+rand = { version = "0.9", features = ["thread_rng"]}
 tokio = { version = "*", features = ["time"], optional = true }
 
 [dev-dependencies]
