@@ -1,3 +1,6 @@
 doc
 target
 Cargo.lock
+
+.vscode/*
+!.vscode/mcp.json
