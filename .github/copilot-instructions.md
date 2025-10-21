@@ -60,11 +60,15 @@ When prompted to create a PR:
 2. Commit all changes to the feature branch
 3. Push changes to the remote repository
 4. Create a PR using GitHub CLI
-5. Add the label **"runtest:all:stable"** to the PR
+5. Add the labels **"runtest:all:stable"** and **"ai-assisted"** to the PR
 6. Use HTML tags in PR description for better formatting
+7. Include AI assistance disclaimer in the PR description
 
 **GitHub CLI Commands Structure:**
 ```bash
+# Create the ai-assisted label if it doesn't exist
+gh label create "ai-assisted" --color "9A4DFF" --description "Work completed with AI assistance following Progress AI policies" --force
+
 # Create and switch to new branch (use Jira ID as branch name)
 git checkout -b JIRA-123
 
@@ -75,10 +79,10 @@ git commit -m "feat: implement feature from JIRA-123"
 # Push branch to remote
 git push origin JIRA-123
 
-# Create PR with HTML-formatted description and label
+# Create PR with HTML-formatted description and labels
 gh pr create --title "feat: implement feature from JIRA-123" \
-  --body "<h3>Summary</h3><p>Brief description of changes</p><h3>Changes Made</h3><ul><li>Change 1</li><li>Change 2</li></ul>" \
-  --label "runtest:all:stable"
+  --body "<h3>Summary</h3><p>Brief description of changes</p><h3>Changes Made</h3><ul><li>Change 1</li><li>Change 2</li></ul><h3>AI Assistance</h3><p>This work was completed with AI assistance following Progress AI policies</p>" \
+  --label "runtest:all:stable,ai-assisted"
 ```
 
 ### Prompt-Based Workflow
@@ -148,9 +152,17 @@ Follow this comprehensive workflow for all task implementations:
 
 9. **Pull Request Creation**
    - Use GitHub CLI to create PR with HTML-formatted description
-   - Add "runtest:all:stable" label
+   - Add "runtest:all:stable" and "ai-assisted" labels
    - Include comprehensive summary of changes
-   - **Prompt**: "Created pull request successfully. Task completed!"
+   - Include AI assistance disclaimer in PR description
+   - **Prompt**: "Created pull request successfully. Next step: Update JIRA ticket. Continue?"
+
+10. **JIRA Ticket Update (MANDATORY)**
+   - Use atlassian-mcp-server to update the JIRA ticket
+   - Set custom field customfield_11170 ("Does this Work Include AI Assisted Code?") to "Yes"
+   - Use correct field format: {"customfield_11170": {"value": "Yes"}}
+   - Verify the field update was successful
+   - **Prompt**: "Updated JIRA ticket with AI assistance field. Task completed!"
 
 ## Best Practices
 
@@ -179,6 +191,26 @@ Follow this comprehensive workflow for all task implementations:
 - Provide clear explanations of technical decisions
 - Highlight any potential risks or breaking changes
 - Suggest alternative approaches when applicable
+
+## JIRA Ticket Management
+
+### Mandatory JIRA Update Process
+After successfully creating a pull request, you **MUST** update the JIRA ticket to indicate AI assistance was used:
+
+1. **Field Update Requirements**
+   - Field: customfield_11170 ("Does this Work Include AI Assisted Code?")
+   - Value: "Yes"
+   - Format: `{"customfield_11170": {"value": "Yes"}}`
+
+2. **Implementation Steps**
+   - Use the atlassian-mcp-server to programmatically update the field
+   - Verify the update was successful
+   - Log any errors or issues with the update process
+
+3. **Error Handling**
+   - If the field update fails, retry once
+   - If still failing, document the issue and proceed
+   - Always verify the field was set correctly
 
 ---
 
